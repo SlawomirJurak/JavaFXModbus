@@ -1,7 +1,17 @@
 package pl.sgnit;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.paint.Color;
@@ -13,10 +23,6 @@ import org.apache.plc4x.java.api.messages.PlcReadRequest;
 import org.apache.plc4x.java.api.messages.PlcReadResponse;
 import org.apache.plc4x.java.api.messages.PlcWriteRequest;
 import org.apache.plc4x.java.api.messages.PlcWriteResponse;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.ExecutionException;
 
 public class PrimaryController {
 
@@ -43,6 +49,8 @@ public class PrimaryController {
     public Circle pin61;
     public Circle pin71;
     public Circle pin81;
+
+    public Label messageLabel;
 
     private Map<String, Circle> circlesRead;
     private Map<String, Circle> circlesWrite;
@@ -93,27 +101,45 @@ public class PrimaryController {
     }
 
     @FXML
-    private void readPinSates() throws ExecutionException, InterruptedException {
+    private void readPinSates() {
+        ScheduledExecutorService scheduler
+            = Executors.newSingleThreadScheduledExecutor();
+
+        Runnable task = new ReadPinsState();
+        int initialDelay = 500;
+        int periodicDelay = 500;
+
+        scheduler.scheduleAtFixedRate(task, initialDelay, periodicDelay,
+            TimeUnit.MILLISECONDS);
+    }
+
+    private void scheduleReadPinState() throws ExecutionException, InterruptedException {
         if (plcConnection == null) {
             return;
         }
 
-        if (!plcConnection.getMetadata().canRead()) {
-            System.out.println("This connection doesn't support reading.");
-            return;
-        }
-
         PlcReadRequest.Builder builder = plcConnection.readRequestBuilder();
-        pinNo.forEach((pin, number) -> {
-            builder.addItem(pin, "coil:" + number);
-        });
+//        pinNo.forEach((pin, number) -> {
+//            builder.addItem(pin, "coil:" + number);
+//        });
+        builder.addItem("P3", "coil:3");
+        builder.addItem("seconds", "holding-register:7");
+        builder.addItem("minutes", "holding-register:6");
+
         PlcReadRequest readRequest = builder.build();
 
         PlcReadResponse response = readRequest.execute().get();
 
-        circlesRead.forEach((pin, circle) -> {
-            boolean pinState = (boolean) response.getObject(pin);
-            circle.setFill(pinState ? pinOnColor : pinOffColor);
+//        circlesRead.forEach((pin, circle) -> {
+//            boolean pinState = (boolean) response.getObject(pin);
+//            circle.setFill(pinState ? pinOnColor : pinOffColor);
+//        });
+        boolean pinState = response.getBoolean("P3");
+        Short seconds = response.getShort("seconds");
+        Short minutes = response.getShort("minutes");
+        Platform.runLater(() -> {
+            pin3.setFill(pinState ? pinOnColor : pinOffColor);
+            messageLabel.setText(String.format("%02d:%02d", minutes, seconds));
         });
     }
 
@@ -129,9 +155,11 @@ public class PrimaryController {
         }
 
         PlcWriteRequest.Builder builder = plcConnection.writeRequestBuilder();
-        pinNo.forEach((pin, number) -> {
-            builder.addItem(pin, "coil:" + number, (boolean) circlesWrite.get(pin).getUserData());
-        });
+        builder.addItem("P8", "coil:9", true);
+        builder.addItem("value-3", "holding-register:1", 255);
+//        pinNo.forEach((pin, number) -> {
+//            builder.addItem(pin, "coil:" + number + 8, (boolean) circlesWrite.get(pin).getUserData());
+//        });
         PlcWriteRequest writeRequest = builder.build();
 
         try {
@@ -164,6 +192,18 @@ public class PrimaryController {
             }
         } catch (PlcConnectionException e) {
             e.printStackTrace();
+        }
+    }
+
+    class ReadPinsState implements Runnable {
+
+        @Override
+        public void run() {
+            try {
+                scheduleReadPinState();
+            } catch (ExecutionException | InterruptedException ex) {
+                Logger.getLogger(PrimaryController.class.getName()).log(Level.SEVERE, null, ex);
+            }
         }
     }
 }
